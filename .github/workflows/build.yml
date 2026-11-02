@@ -1,0 +1,99 @@
+name: Compila APK install
+
+# Un APK per ogni file apps/ID.json (nome, colore, pacchetto).
+# Ogni APK va nella release con tag = ID: il link di download resta sempre lo stesso.
+on:
+  push:
+    branches: [main]
+    paths: ['app/**', 'apps/**', '*.gradle.kts', 'gradle.properties', '.github/workflows/build.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+env:
+  INSTALLER: https://script.google.com/macros/s/AKfycbzoZTOCdMxhSilwoApDHsDg_5vImajdkOvf7OdJ0Lt_8eaepzvEn3qb5OblnFV3xXDALg/exec
+  IMPRONTA: A5:43:C6:14:80:D6:E7:C8:D8:44:16:42:41:20:1F:CB:A0:77:2E:5B:0F:34:BB:02:F8:27:09:73:4D:39:FA:36
+
+jobs:
+  elenco:
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.e.outputs.apps }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: e
+        run: echo "apps=$(ls apps/*.json | xargs -n1 basename | sed 's/\.json$//' | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+  apk:
+    needs: elenco
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        app: ${{ fromJson(needs.elenco.outputs.apps) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Installa Gradle 9.3.1
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-9.3.1-bin.zip -O /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /opt/gradle
+          echo "/opt/gradle/gradle-9.3.1/bin" >> "$GITHUB_PATH"
+
+      - name: Leggi i dati dell'app
+        run: |
+          F="apps/${{ matrix.app }}.json"
+          NOME=$(jq -r '.nome // empty' "$F"); COLORE=$(jq -r '.colore // "#534AB7"' "$F"); PK=$(jq -r '.pacchetto // empty' "$F")
+          echo "$NOME" | grep -qE "^[A-Za-z0-9 ._'!àèéìòùÀÈÉÌÒÙ-]{1,30}$" || { echo "Nome non valido: $NOME"; exit 1; }
+          echo "$COLORE" | grep -qE '^#[0-9A-Fa-f]{6}$' || { echo "Colore non valido: $COLORE"; exit 1; }
+          echo "$PK" | grep -qE '^[A-Za-z0-9_-]{10,100}$' || { echo "Pacchetto non valido: $PK"; exit 1; }
+          FILE="$(echo "$NOME" | sed "s/[^A-Za-z0-9]\+/-/g; s/^-//; s/-$//")-install.apk"
+          { echo "NOME=$NOME"; echo "COLORE=$COLORE"; echo "PK=$PK"; echo "FILE=$FILE"; } >> "$GITHUB_ENV"
+
+      - name: Prepara la chiave di firma
+        env:
+          KS: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          echo "$KS" | base64 -d > "$RUNNER_TEMP/firma.p12"
+          echo "KS_FILE=$RUNNER_TEMP/firma.p12" >> "$GITHUB_ENV"
+
+      - name: Compila APK
+        env:
+          KS_PASS: ${{ secrets.KEYSTORE_PASS }}
+        run: |
+          gradle assembleRelease --no-daemon --stacktrace \
+            -PappId="${{ matrix.app }}" -PappNome="$NOME" -PappColore="$COLORE" \
+            -PappUrl="$INSTALLER?p=$PK&apk=1" -PverCode="${{ github.run_number }}"
+          cp app/build/outputs/apk/release/app-release.apk "$FILE"
+          rm -f "$KS_FILE"
+
+      - name: Controlla la firma
+        run: |
+          AS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          "$AS" verify --print-certs "$FILE" | tee firma.txt
+          grep -i "SHA-256 digest" firma.txt | head -1 | awk '{print toupper($NF)}' | sed 's/../&:/g; s/:$//' > trovata.txt
+          echo "Impronta trovata: $(cat trovata.txt)"
+          test "$(cat trovata.txt)" = "$IMPRONTA"
+
+      - name: Pubblica (link fisso per app)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          T="${{ matrix.app }}"
+          NOTE="$NOME install - versione 1.${{ github.run_number }} - idea e sviluppo by Daniel Zavan"
+          gh release view "$T" >/dev/null 2>&1 || gh release create "$T" --title "$NOME install" --notes "$NOTE" --target main --latest=false
+          gh release upload "$T" "$FILE" --clobber
+          gh release edit "$T" --notes "$NOTE"
+          echo "Link: https://github.com/${{ github.repository }}/releases/download/$T/$FILE"
