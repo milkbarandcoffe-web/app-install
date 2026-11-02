@@ -110,7 +110,17 @@ public class MainActivity extends Activity {
       + "if(d.indexOf('dz-')===0&&window.DZ&&window.DZ.msg){try{window.DZ.msg(d);}catch(x){}}"
       + "});}catch(e){}}";
 
+  /** Tendina sopra le pagine dei permessi Google (non tocca la pagina: la spinge sotto). */
+  static final String TESTO_AIUTO =
+      "Google chiede il permesso per l'app di Daniel Zavan.   ▲ nascondi\n"
+      + "1. Se vedi «Google non ha verificato questa app»: tocca «Avanzate» (in basso a sinistra).\n"
+      + "2. Scorri giù e tocca «Apri … (non sicura)».\n"
+      + "3. Se compaiono delle caselle: «Seleziona tutto», poi «Continua».";
+  static final String AIUTO_CHIUSO = "▼ Aiuto per i permessi Google: tocca qui";
+
   SharedPreferences prefs;
+  String guida = "";
+  boolean apiOk = false;
   FrameLayout root;
   FrameLayout contenuto;
   WebView web;
@@ -327,6 +337,7 @@ public class MainActivity extends Activity {
   protected void onCreate(Bundle stato) {
     super.onCreate(stato);
     prefs = getSharedPreferences("cfg", MODE_PRIVATE);
+    guida = leggiAsset("guida.js");
     root = new FrameLayout(this);
     root.setBackgroundColor(NERO);
     root.setOnApplyWindowInsetsListener(this::bordi);
@@ -421,26 +432,61 @@ public class MainActivity extends Activity {
     s.setJavaScriptCanOpenWindowsAutomatically(true);
     s.setLoadWithOverviewMode(true);
     s.setUseWideViewPort(true);
+    s.setSupportZoom(true);
+    s.setBuiltInZoomControls(true);
+    s.setDisplayZoomControls(false);
     CookieManager cm = CookieManager.getInstance();
     cm.setAcceptCookie(true);
     cm.setAcceptThirdPartyCookies(w, true);
-    w.addJavascriptInterface(new Ponte(), "DZ");
+    w.addJavascriptInterface(new Ponte(w), "DZ");
     w.setWebViewClient(client);
     w.setWebChromeClient(chrome);
     return w;
   }
 
-  /** Messaggi dall'INSTALLER: dz-pronto, dz-app:URL (salva), dz-apri:URL (salva e apre). */
+  /**
+   * Messaggi dalle pagine: dz-pronto, dz-app:URL (salva), dz-apri:URL (salva e apre),
+   * dz-api-on (interruttore acceso: chiude la finestra e riprende l'installazione),
+   * dz-rimossa (app disinstallata: dimentica il link), dz-zoom:F (ingrandisce la pagina).
+   */
   class Ponte {
+    final WebView w;
+
+    Ponte(WebView w) {
+      this.w = w;
+    }
+
     @JavascriptInterface
     public void msg(String m) {
       if (m == null || m.length() > 400) return;
       final String s = m;
-      runOnUiThread(() -> messaggio(s));
+      runOnUiThread(() -> messaggio(s, w));
     }
   }
 
-  void messaggio(String m) {
+  void messaggio(String m, WebView w) {
+    if (m.startsWith("dz-zoom:")) {
+      try {
+        float f = Float.parseFloat(m.substring(8));
+        if (f > 1f && f <= 3f) w.zoomBy(f);
+      } catch (Exception ignored) {
+      }
+      return;
+    }
+    if (m.equals("dz-api-on")) {
+      if (apiOk) return;
+      apiOk = true;
+      toast("Interruttore attivo ✓");
+      h.postDelayed(() -> {
+        apiOk = false;
+        apri(BuildConfig.INSTALLER + "&riprendi=1");
+      }, 1300);
+      return;
+    }
+    if (m.equals("dz-rimossa")) {
+      prefs.edit().remove("app").apply();
+      return;
+    }
     if (m.equals("dz-pronto") || m.equals("claudeexe-pronto")) {
       pronto = true;
       return;
@@ -475,6 +521,7 @@ public class MainActivity extends Activity {
 
       @Override
       public void onPageStarted(WebView v, String u, Bitmap f) {
+        aiuto(v, u);
         if (v != web) return;
         if (barra != null) barra.setVisibility(View.VISIBLE);
         // Solo script.google.com ha il banner: lo copriamo finche non sparisce.
@@ -498,10 +545,19 @@ public class MainActivity extends Activity {
       public void onPageFinished(WebView v, String u) {
         CookieManager.getInstance().flush();
         v.evaluateJavascript("(function(){" + JS_ASCOLTA + "})()", null);
+        aiuto(v, u);
+        if (!guida.isEmpty() && "script.google.com".equals(Uri.parse(u).getHost())) {
+          v.evaluateJavascript(guida, null);
+        }
         if (v != web) return;
         if (barra != null) barra.setVisibility(View.GONE);
         finito = true;
         fine = SystemClock.uptimeMillis();
+      }
+
+      @Override
+      public void doUpdateVisitedHistory(WebView v, String u, boolean ricarica) {
+        aiuto(v, u);
       }
 
       @Override
@@ -521,14 +577,30 @@ public class MainActivity extends Activity {
         LinearLayout col = new LinearLayout(MainActivity.this);
         col.setOrientation(LinearLayout.VERTICAL);
         TextView bx = new TextView(MainActivity.this);
-        bx.setText("✕  Chiudi");
-        bx.setTextColor(0xFFDDDDDD);
-        bx.setTextSize(15);
+        bx.setText("←  TORNA A " + BuildConfig.NOME.toUpperCase());
+        bx.setTextColor(Color.WHITE);
+        bx.setTextSize(17);
+        bx.setTypeface(Typeface.DEFAULT_BOLD);
+        bx.setSingleLine(true);
         bx.setGravity(Gravity.CENTER_VERTICAL);
-        bx.setPadding(dp(16), 0, dp(16), 0);
-        bx.setBackgroundColor(0xFF1A1A1F);
+        bx.setPadding(dp(18), 0, dp(18), 0);
+        bx.setBackgroundColor(BuildConfig.COLORE);
         bx.setOnClickListener(x -> chiudi(p));
-        col.addView(bx, new LinearLayout.LayoutParams(-1, dp(44)));
+        col.addView(bx, new LinearLayout.LayoutParams(-1, dp(54)));
+        final TextView aiuto = new TextView(MainActivity.this);
+        aiuto.setText(TESTO_AIUTO);
+        aiuto.setTextColor(0xFFF2F2F2);
+        aiuto.setTextSize(15);
+        aiuto.setLineSpacing(0, 1.15f);
+        aiuto.setPadding(dp(16), dp(10), dp(16), dp(12));
+        aiuto.setBackgroundColor(0xFF2A2340);
+        aiuto.setVisibility(View.GONE);
+        aiuto.setOnClickListener(x -> {
+          boolean chiuso = AIUTO_CHIUSO.contentEquals(aiuto.getText());
+          aiuto.setText(chiuso ? TESTO_AIUTO : AIUTO_CHIUSO);
+        });
+        col.addView(aiuto, new LinearLayout.LayoutParams(-1, -2));
+        p.setTag(aiuto);
         col.addView(p, new LinearLayout.LayoutParams(-1, 0, 1));
         f.addView(col, new FrameLayout.LayoutParams(-1, -1));
         finestre.add(f);
@@ -543,6 +615,29 @@ public class MainActivity extends Activity {
         chiudi(w);
       }
     };
+  }
+
+  /** Mostra la tendina di aiuto solo sulle pagine dei permessi Google (accounts.google.*, percorso con "oauth"). */
+  void aiuto(WebView v, String u) {
+    Object t = v.getTag();
+    if (!(t instanceof View) || u == null) return;
+    Uri x = Uri.parse(u);
+    String host = x.getHost() == null ? "" : x.getHost().toLowerCase();
+    String path = x.getPath() == null ? "" : x.getPath().toLowerCase();
+    boolean si = host.startsWith("accounts.google.") && path.contains("oauth");
+    ((View) t).setVisibility(si ? View.VISIBLE : View.GONE);
+  }
+
+  String leggiAsset(String n) {
+    try (java.io.InputStream in = getAssets().open(n)) {
+      java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
+      byte[] b = new byte[8192];
+      int k;
+      while ((k = in.read(b)) > 0) o.write(b, 0, k);
+      return o.toString("UTF-8");
+    } catch (Exception e) {
+      return "";
+    }
   }
 
   void chiudi(WebView w) {
@@ -575,7 +670,7 @@ public class MainActivity extends Activity {
   // ---------- Menu ----------
 
   void menu() {
-    String[] voci = {"Ricarica", "Aggiorna l'app", "Esci da Google", "Info"};
+    String[] voci = {"Ricarica", "Aggiorna l'app", "Disinstalla l'app", "Esci da Google", "Info"};
     new AlertDialog.Builder(this)
         .setTitle(BuildConfig.NOME)
         .setItems(voci, (d, i) -> {
@@ -587,6 +682,9 @@ public class MainActivity extends Activity {
               apri(BuildConfig.INSTALLER);
               break;
             case 2:
+              apri(BuildConfig.INSTALLER + "&azione=disinstalla");
+              break;
+            case 3:
               esci();
               break;
             default:
@@ -623,6 +721,7 @@ public class MainActivity extends Activity {
             ? "App installata e collegata: si apre direttamente."
             : "App non ancora installata: si apre l'installazione.")
             + "\n\nAggiorna l'app: riapre l'installazione per aggiornarla o reinstallarla."
+            + "\n\nDisinstalla l'app: la cartella dell'app nel Drive va nel cestino (30 giorni per recuperarla)."
             + "\n\nIngranaggio in basso a sinistra = menu."
             + "\n\n" + FIRMA)
         .setPositiveButton("OK", null)
