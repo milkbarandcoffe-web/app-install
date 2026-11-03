@@ -1,0 +1,36 @@
+name: Prova servizio
+
+# Chiamata di prova (anonima, da fuori Google) a una webapp Apps Script: GET e POST JSON. Esito su un ramo temporaneo.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Link /exec della webapp
+        required: true
+      dati:
+        description: JSON da mandare in POST
+        required: false
+        default: '{"azione":"licenza","chiave":"PROV-APRO-VAAA","sid":"x"}'
+
+permissions:
+  contents: write
+
+jobs:
+  prova:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Chiama
+        env:
+          URL: ${{ inputs.url }}
+          DATI: ${{ inputs.dati }}
+        run: |
+          echo "$URL" | grep -qE '^https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/exec$' || { echo "URL non valido"; exit 1; }
+          { echo "== GET"; curl -sSL -o g.txt -w "%{http_code} %{url_effective}\n" "$URL"; head -c 600 g.txt; echo;
+            echo "== POST"; curl -sSL -o p.txt -w "%{http_code} %{url_effective}\n" -H "Content-Type: application/json" --data "$DATI" "$URL"; head -c 1500 p.txt; echo; } > esito.txt 2>&1 || true
+          cat esito.txt
+      - name: Salva su un ramo temporaneo
+        run: |
+          git config user.name "dz-bot"; git config user.email "dz-bot@users.noreply.github.com"
+          mv esito.txt /tmp/esito.txt; git checkout --orphan tmp-prova; git rm -rq --cached .; git clean -fdq
+          cp /tmp/esito.txt .; git add esito.txt; git commit -qm "esito prova"; git push -fq origin tmp-prova
