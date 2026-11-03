@@ -298,6 +298,9 @@ public class MainActivity extends Activity {
     riga.setOrientation(LinearLayout.HORIZONTAL);
     riga.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
     riga.setPadding(0, dp(16), 0, 0);
+    // Il salto dei pallini usa lo spazio sopra (padding): senza questo restano tagliati.
+    riga.setClipToPadding(false);
+    riga.setClipChildren(false);
     puntini = new View[COLORI.length];
     for (int i = 0; i < COLORI.length; i++) {
       View p = new View(this);
@@ -318,7 +321,7 @@ public class MainActivity extends Activity {
     lps.topMargin = dp(6);
     l.addView(sotto, lps);
     LinearLayout.LayoutParams lpr = new LinearLayout.LayoutParams(-2, -2);
-    lpr.topMargin = dp(22);
+    lpr.topMargin = dp(6);
     l.addView(riga, lpr);
 
     onda = ValueAnimator.ofFloat(0f, 1f);
