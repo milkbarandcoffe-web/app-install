@@ -138,6 +138,27 @@
     if (location.pathname.indexOf('/home/usersettings') === 0) {
       misuraTelefono();
       var sw = interruttore();
+      // Aperta dal menu "Spegni interruttore API": guida a spegnerlo, non avvisa l'APK.
+      if (W.__dzSpegni) {
+        if (sw && !acceso(sw)) {
+          bersaglio = null; posiziona();
+          info('Fatto ✓  Interruttore spento. Tocca «TORNA A …» in alto.', true);
+          return;
+        }
+        if (sw) {
+          indica(sw, 'Tocca l\'interruttore');
+          info('Passo 2 di 2: spegni l\'interruttore.');
+          return;
+        }
+        var r0 = cerca(/^(API Google Apps Script|Google Apps Script API)\b/i, 'a,button,[role=button],[role=link],[role=listitem],li,div,span');
+        if (r0) {
+          indica(r0, 'Tocca qui');
+          info('Passo 1 di 2: tocca "API Google Apps Script".');
+          return;
+        }
+        indica(null); info('');
+        return;
+      }
       if (acceso(sw)) {
         fatto = true;
         bersaglio = null; posiziona();

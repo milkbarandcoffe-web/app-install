@@ -118,7 +118,33 @@ public class MainActivity extends Activity {
       + "3. Se compaiono delle caselle: «Seleziona tutto», poi «Continua».";
   static final String AIUTO_CHIUSO = "▼ Aiuto per i permessi Google: tocca qui";
 
+  /** Tendina della finestra "Togli permessi Google" (aperta dal menu). */
+  static final String TESTO_PERMESSI =
+      "Togli i permessi Google.   ▲ nascondi\n"
+      + "1. Tocca il nome dell'app (INSTALLER o il nome dell'app installata).\n"
+      + "2. Tocca il pulsante per eliminare le connessioni, poi conferma.\n"
+      + "3. Tocca «TORNA A …» in alto: l'app si ricarica e Google chiede di nuovo i permessi.";
+  static final String URL_INTERRUTTORE = "https://script.google.com/home/usersettings";
+  static final String URL_PERMESSI = "https://myaccount.google.com/connections";
+
+  /**
+   * Dopo il login: "1" se la pagina e un'app Apps Script (riquadro interno) o la pagina
+   * "Autorizzazione necessaria", "0" se e una pagina di errore di Google.
+   */
+  static final String JS_PAGINA_APP =
+      "(function(){try{if(document.querySelector('iframe'))return '1';"
+      + "var t=(document.body&&document.body.innerText)||'';"
+      + "return /Review permissions|Rivedi (le )?autorizzazioni|Esamina (le )?autorizzazioni/i.test(t)?'1':'0';"
+      + "}catch(e){return '1';}})()";
+
   SharedPreferences prefs;
+  // Finestra aperta dal menu (interruttore API o permessi Google): alla chiusura l'app si ricarica.
+  WebView finMenu;
+  boolean menuSpegni = false;
+  // Dopo il login Google: se arriva la pagina di errore di Google, una ricarica automatica.
+  boolean daLogin = false;
+  boolean verificaLogin = false;
+  long ultimaRicarica = 0;
   String guida = "";
   boolean apiOk = false;
   FrameLayout root;
@@ -414,6 +440,7 @@ public class MainActivity extends Activity {
 
   void apri(String u) {
     if (web == null) return;
+    finMenu = null;
     chiudiFinestre();
     copri();
     web.loadUrl(u);
@@ -474,7 +501,7 @@ public class MainActivity extends Activity {
       return;
     }
     if (m.equals("dz-api-on")) {
-      if (apiOk) return;
+      if (apiOk || w == finMenu) return;
       apiOk = true;
       toast("Interruttore attivo ✓");
       h.postDelayed(() -> {
@@ -523,6 +550,7 @@ public class MainActivity extends Activity {
       public void onPageStarted(WebView v, String u, Bitmap f) {
         aiuto(v, u);
         if (v != web) return;
+        segnaLogin(Uri.parse(u).getHost());
         if (barra != null) barra.setVisibility(View.VISIBLE);
         // Solo script.google.com ha il banner: lo copriamo finche non sparisce.
         // Le pagine di login Google restano visibili.
@@ -546,18 +574,26 @@ public class MainActivity extends Activity {
         CookieManager.getInstance().flush();
         v.evaluateJavascript("(function(){" + JS_ASCOLTA + "})()", null);
         aiuto(v, u);
-        if (!guida.isEmpty() && "script.google.com".equals(Uri.parse(u).getHost())) {
+        boolean gas = "script.google.com".equals(Uri.parse(u).getHost());
+        if (!guida.isEmpty() && gas) {
+          // Finestra "Spegni interruttore API" dal menu: la guida indica come spegnerlo.
+          if (v == finMenu && menuSpegni) v.evaluateJavascript("window.__dzSpegni=1;", null);
           v.evaluateJavascript(guida, null);
         }
         if (v != web) return;
         if (barra != null) barra.setVisibility(View.GONE);
         finito = true;
         fine = SystemClock.uptimeMillis();
+        if (verificaLogin && gas) {
+          verificaLogin = false;
+          h.postDelayed(MainActivity.this::verificaDopoLogin, 400);
+        }
       }
 
       @Override
       public void doUpdateVisitedHistory(WebView v, String u, boolean ricarica) {
         aiuto(v, u);
+        if (v == web) segnaLogin(Uri.parse(u).getHost());
       }
 
       @Override
@@ -570,41 +606,7 @@ public class MainActivity extends Activity {
     chrome = new WebChromeClient() {
       @Override
       public boolean onCreateWindow(WebView v, boolean dialog, boolean user, Message msg) {
-        WebView p = nuovaWeb();
-        FrameLayout f = new FrameLayout(MainActivity.this);
-        f.setBackgroundColor(NERO);
-        f.setTag(p);
-        LinearLayout col = new LinearLayout(MainActivity.this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        TextView bx = new TextView(MainActivity.this);
-        bx.setText("←  TORNA A " + BuildConfig.NOME.toUpperCase());
-        bx.setTextColor(Color.WHITE);
-        bx.setTextSize(17);
-        bx.setTypeface(Typeface.DEFAULT_BOLD);
-        bx.setSingleLine(true);
-        bx.setGravity(Gravity.CENTER_VERTICAL);
-        bx.setPadding(dp(18), 0, dp(18), 0);
-        bx.setBackgroundColor(BuildConfig.COLORE);
-        bx.setOnClickListener(x -> chiudi(p));
-        col.addView(bx, new LinearLayout.LayoutParams(-1, dp(54)));
-        final TextView aiuto = new TextView(MainActivity.this);
-        aiuto.setText(TESTO_AIUTO);
-        aiuto.setTextColor(0xFFF2F2F2);
-        aiuto.setTextSize(15);
-        aiuto.setLineSpacing(0, 1.15f);
-        aiuto.setPadding(dp(16), dp(10), dp(16), dp(12));
-        aiuto.setBackgroundColor(0xFF2A2340);
-        aiuto.setVisibility(View.GONE);
-        aiuto.setOnClickListener(x -> {
-          boolean chiuso = AIUTO_CHIUSO.contentEquals(aiuto.getText());
-          aiuto.setText(chiuso ? TESTO_AIUTO : AIUTO_CHIUSO);
-        });
-        col.addView(aiuto, new LinearLayout.LayoutParams(-1, -2));
-        p.setTag(aiuto);
-        col.addView(p, new LinearLayout.LayoutParams(-1, 0, 1));
-        f.addView(col, new FrameLayout.LayoutParams(-1, -1));
-        finestre.add(f);
-        contenuto.addView(f, new FrameLayout.LayoutParams(-1, -1));
+        WebView p = finestra(TESTO_AIUTO);
         ((WebView.WebViewTransport) msg.obj).setWebView(p);
         msg.sendToTarget();
         return true;
@@ -617,7 +619,50 @@ public class MainActivity extends Activity {
     };
   }
 
-  /** Mostra la tendina di aiuto solo sulle pagine dei permessi Google (accounts.google.*, percorso con "oauth"). */
+  /** Finestra sopra l'app con la barra "TORNA A NOME" e una tendina di aiuto (testo aperto = testo). */
+  WebView finestra(final String testo) {
+    WebView p = nuovaWeb();
+    FrameLayout f = new FrameLayout(MainActivity.this);
+    f.setBackgroundColor(NERO);
+    f.setTag(p);
+    LinearLayout col = new LinearLayout(MainActivity.this);
+    col.setOrientation(LinearLayout.VERTICAL);
+    TextView bx = new TextView(MainActivity.this);
+    bx.setText("←  TORNA A " + BuildConfig.NOME.toUpperCase());
+    bx.setTextColor(Color.WHITE);
+    bx.setTextSize(17);
+    bx.setTypeface(Typeface.DEFAULT_BOLD);
+    bx.setSingleLine(true);
+    bx.setGravity(Gravity.CENTER_VERTICAL);
+    bx.setPadding(dp(18), 0, dp(18), 0);
+    bx.setBackgroundColor(BuildConfig.COLORE);
+    bx.setOnClickListener(x -> chiudi(p));
+    col.addView(bx, new LinearLayout.LayoutParams(-1, dp(54)));
+    final TextView aiuto = new TextView(MainActivity.this);
+    aiuto.setText(testo);
+    aiuto.setTextColor(0xFFF2F2F2);
+    aiuto.setTextSize(15);
+    aiuto.setLineSpacing(0, 1.15f);
+    aiuto.setPadding(dp(16), dp(10), dp(16), dp(12));
+    aiuto.setBackgroundColor(0xFF2A2340);
+    aiuto.setVisibility(View.GONE);
+    aiuto.setOnClickListener(x -> {
+      boolean chiuso = AIUTO_CHIUSO.contentEquals(aiuto.getText());
+      aiuto.setText(chiuso ? testo : AIUTO_CHIUSO);
+    });
+    col.addView(aiuto, new LinearLayout.LayoutParams(-1, -2));
+    p.setTag(aiuto);
+    col.addView(p, new LinearLayout.LayoutParams(-1, 0, 1));
+    f.addView(col, new FrameLayout.LayoutParams(-1, -1));
+    finestre.add(f);
+    contenuto.addView(f, new FrameLayout.LayoutParams(-1, -1));
+    return p;
+  }
+
+  /**
+   * Mostra la tendina di aiuto sulle pagine dei permessi Google (accounts.google.*, percorso con "oauth")
+   * e sulla pagina myaccount.google.com della finestra "Togli permessi Google".
+   */
   void aiuto(WebView v, String u) {
     Object t = v.getTag();
     if (!(t instanceof View) || u == null) return;
@@ -625,7 +670,49 @@ public class MainActivity extends Activity {
     String host = x.getHost() == null ? "" : x.getHost().toLowerCase();
     String path = x.getPath() == null ? "" : x.getPath().toLowerCase();
     boolean si = host.startsWith("accounts.google.") && path.contains("oauth");
+    if (v == finMenu && !menuSpegni) si = host.equals("myaccount.google.com");
     ((View) t).setVisibility(si ? View.VISIBLE : View.GONE);
+  }
+
+  /** Tiene traccia del passaggio dal login Google alla pagina dell'app (solo pagina principale). */
+  void segnaLogin(String host) {
+    if (host == null) return;
+    host = host.toLowerCase();
+    if (host.startsWith("accounts.google.")) {
+      daLogin = true;
+      verificaLogin = false;
+    } else if (host.equals("script.google.com") && daLogin) {
+      daLogin = false;
+      verificaLogin = true;
+    }
+  }
+
+  /**
+   * Subito dopo il login Google a volte mostra la sua pagina di errore: i cookie non sono ancora pronti.
+   * Se la pagina non e l'app, ricarica il link di partenza una volta (al massimo una ogni 30 s).
+   * La schermata di attesa resta sopra: la pagina di errore non si vede.
+   */
+  void verificaDopoLogin() {
+    if (web == null || !finestre.isEmpty()) return;
+    String cu = web.getUrl();
+    if (cu == null || !"script.google.com".equals(Uri.parse(cu).getHost())) return;
+    web.evaluateJavascript(JS_PAGINA_APP, r -> {
+      if (!"\"0\"".equals(r) || web == null) return;
+      long ora = SystemClock.uptimeMillis();
+      if (ultimaRicarica != 0 && ora - ultimaRicarica < 30000) return;
+      ultimaRicarica = ora;
+      apri(inizio());
+    });
+  }
+
+  /** Apre dal menu una pagina Google in una finestra sopra l'app. Alla chiusura l'app si ricarica. */
+  void apriImpostazione(String url, boolean spegni) {
+    if (web == null) return;
+    finMenu = null;
+    chiudiFinestre();
+    menuSpegni = spegni;
+    finMenu = finestra(spegni ? TESTO_AIUTO : TESTO_PERMESSI);
+    finMenu.loadUrl(url);
   }
 
   String leggiAsset(String n) {
@@ -648,6 +735,12 @@ public class MainActivity extends Activity {
         contenuto.removeView(f);
         w.stopLoading();
         h.post(w::destroy);
+        // Finestra del menu chiusa: ricarica l'app, cosi legge subito interruttore e permessi nuovi.
+        if (w == finMenu) {
+          finMenu = null;
+          menuSpegni = false;
+          h.post(() -> apri(inizio()));
+        }
         return;
       }
     }
@@ -670,7 +763,8 @@ public class MainActivity extends Activity {
   // ---------- Menu ----------
 
   void menu() {
-    String[] voci = {"Ricarica", "Aggiorna l'app", "Disinstalla l'app", "Esci da Google", "Info"};
+    String[] voci = {"Ricarica", "Aggiorna l'app", "Disinstalla l'app",
+        "Spegni interruttore API", "Togli permessi Google", "Esci da Google", "Info"};
     new AlertDialog.Builder(this)
         .setTitle(BuildConfig.NOME)
         .setItems(voci, (d, i) -> {
@@ -685,6 +779,12 @@ public class MainActivity extends Activity {
               apri(BuildConfig.INSTALLER + "&azione=disinstalla");
               break;
             case 3:
+              apriImpostazione(URL_INTERRUTTORE, true);
+              break;
+            case 4:
+              apriImpostazione(URL_PERMESSI, false);
+              break;
+            case 5:
               esci();
               break;
             default:
@@ -722,6 +822,9 @@ public class MainActivity extends Activity {
             : "App non ancora installata: si apre l'installazione.")
             + "\n\nAggiorna l'app: riapre l'installazione per aggiornarla o reinstallarla."
             + "\n\nDisinstalla l'app: la cartella dell'app nel Drive va nel cestino (30 giorni per recuperarla)."
+            + "\n\nSpegni interruttore API: apre l'impostazione «API Google Apps Script» del tuo account."
+            + "\n\nTogli permessi Google: apre l'elenco delle app con accesso al tuo account."
+            + " Chiudendo la finestra l'app si ricarica."
             + "\n\nIngranaggio in basso a sinistra = menu."
             + "\n\n" + FIRMA)
         .setPositiveButton("OK", null)
@@ -853,6 +956,7 @@ public class MainActivity extends Activity {
   protected void onDestroy() {
     h.removeCallbacksAndMessages(null);
     fermaAttesa();
+    finMenu = null;
     chiudiFinestre();
     if (web != null) {
       ViewGroup p = (ViewGroup) web.getParent();

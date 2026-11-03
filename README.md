@@ -7,5 +7,7 @@ APK "NOME install": un APK per ogni app Google Apps Script.
 - Ogni app ha un file `apps/ID.json` con `nome`, `colore` e `pacchetto` (id del pacchetto creato dal comando `pacchetto` di CLAUDE-EXE).
 - GitHub compila e pubblica ogni APK nella release con tag `ID`: il link di download resta sempre lo stesso.
 - Firma con chiave fissa salvata nei Secrets del repo (KEYSTORE_B64, KEYSTORE_PASS).
+- Dopo il login Google, se arriva la pagina di errore di Google, l'APK ricarica da solo una volta.
+- Menu ⚙: Ricarica, Aggiorna l'app, Disinstalla l'app, Spegni interruttore API, Togli permessi Google, Esci da Google, Info.
 
 idea e sviluppo by Daniel Zavan
