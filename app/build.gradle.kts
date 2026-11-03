@@ -9,6 +9,8 @@ val appNome = prop("appNome", "App")
 val appColore = prop("appColore", "#534AB7")
 val appUrl = prop("appUrl", "")
 val verCode = prop("verCode", "1").toInt()
+val appUnico = prop("appUnico", "false") == "true"
+val appServizio = prop("appServizio", "")
 val pacchetto = "com.dz.install." + appId.lowercase().replace(Regex("[^a-z0-9]"), "_")
     .let { if (it.first().isDigit()) "a$it" else it }
 val coloreInt = "0xFF" + appColore.removePrefix("#").uppercase()
@@ -28,6 +30,10 @@ android {
     resValue("color", "icona", appColore)
     buildConfigField("String", "NOME", javaStr(appNome))
     buildConfigField("String", "INSTALLER", javaStr(appUrl))
+    buildConfigField("boolean", "UNICO", appUnico.toString())
+    buildConfigField("String", "SERVIZIO", javaStr(appServizio))
+    // DZ App apre i link dzapp://chiave?k=...; gli APK per una sola app hanno uno schema loro, mai usato.
+    manifestPlaceholders["dzScheme"] = if (appUnico) "dzapp" else "dzapp-" + appId.lowercase().replace(Regex("[^a-z0-9]"), "-")
     buildConfigField("int", "COLORE", coloreInt)
   }
 

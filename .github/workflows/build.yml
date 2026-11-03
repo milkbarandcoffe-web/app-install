@@ -56,11 +56,20 @@ jobs:
         run: |
           F="apps/${{ matrix.app }}.json"
           NOME=$(jq -r '.nome // empty' "$F"); COLORE=$(jq -r '.colore // "#534AB7"' "$F"); PK=$(jq -r '.pacchetto // empty' "$F")
+          UNICO=$(jq -r '.unico // false' "$F"); SERV=$(jq -r '.servizio // empty' "$F"); FJ=$(jq -r '.file // empty' "$F")
           echo "$NOME" | grep -qE "^[A-Za-z0-9 ._'!àèéìòùÀÈÉÌÒÙ-]{1,30}$" || { echo "Nome non valido: $NOME"; exit 1; }
           echo "$COLORE" | grep -qE '^#[0-9A-Fa-f]{6}$' || { echo "Colore non valido: $COLORE"; exit 1; }
-          echo "$PK" | grep -qE '^[A-Za-z0-9_-]{10,100}$' || { echo "Pacchetto non valido: $PK"; exit 1; }
-          FILE="$(echo "$NOME" | sed "s/[^A-Za-z0-9]\+/-/g; s/^-//; s/-$//")-install.apk"
-          { echo "NOME=$NOME"; echo "COLORE=$COLORE"; echo "PK=$PK"; echo "FILE=$FILE"; } >> "$GITHUB_ENV"
+          if [ "$UNICO" = "true" ]; then
+            # DZ App: un APK per tutte le app, con chiave. Niente pacchetto fisso; serve il link del servizio LICENZE.
+            echo "$SERV" | grep -qE '^https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/exec$' || { echo "Servizio non valido: $SERV"; exit 1; }
+            TITOLO="$NOME"
+          else
+            echo "$PK" | grep -qE '^[A-Za-z0-9_-]{10,100}$' || { echo "Pacchetto non valido: $PK"; exit 1; }
+            TITOLO="$NOME install"
+          fi
+          FILE="${FJ:-$(echo "$NOME" | sed "s/[^A-Za-z0-9]\+/-/g; s/^-//; s/-$//")-install.apk}"
+          echo "$FILE" | grep -qE '^[A-Za-z0-9._-]{1,60}\.apk$' || { echo "File non valido: $FILE"; exit 1; }
+          { echo "NOME=$NOME"; echo "COLORE=$COLORE"; echo "PK=$PK"; echo "FILE=$FILE"; echo "UNICO=$UNICO"; echo "SERV=$SERV"; echo "TITOLO=$TITOLO"; } >> "$GITHUB_ENV"
 
       - name: Prepara la chiave di firma
         env:
@@ -75,7 +84,8 @@ jobs:
         run: |
           gradle assembleRelease --no-daemon --stacktrace \
             -PappId="${{ matrix.app }}" -PappNome="$NOME" -PappColore="$COLORE" \
-            -PappUrl="$INSTALLER?p=$PK&apk=1" -PverCode="${{ github.run_number }}"
+            -PappUrl="$( [ "$UNICO" = "true" ] && echo "$INSTALLER" || echo "$INSTALLER?p=$PK&apk=1" )" \
+            -PappUnico="$UNICO" -PappServizio="$SERV" -PverCode="${{ github.run_number }}"
           cp app/build/outputs/apk/release/app-release.apk "$FILE"
           rm -f "$KS_FILE"
 
@@ -92,8 +102,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           T="${{ matrix.app }}"
-          NOTE="$NOME install - versione 1.${{ github.run_number }} - idea e sviluppo by Daniel Zavan"
-          gh release view "$T" >/dev/null 2>&1 || gh release create "$T" --title "$NOME install" --notes "$NOTE" --target main --latest=false
+          NOTE="$TITOLO - versione 1.${{ github.run_number }} - idea e sviluppo by Daniel Zavan"
+          gh release view "$T" >/dev/null 2>&1 || gh release create "$T" --title "$TITOLO" --notes "$NOTE" --target main --latest=false
           gh release upload "$T" "$FILE" --clobber
           gh release edit "$T" --notes "$NOTE"
           echo "Link: https://github.com/${{ github.repository }}/releases/download/$T/$FILE"

@@ -8,6 +8,8 @@ APK "NOME install": un APK per ogni app Google Apps Script.
 - GitHub compila e pubblica ogni APK nella release con tag `ID`: il link di download resta sempre lo stesso.
 - Firma con chiave fissa salvata nei Secrets del repo (KEYSTORE_B64, KEYSTORE_PASS).
 - Dopo il login Google, se arriva la pagina di errore di Google, l'APK ricarica da solo una volta.
+- DZ App (apps/dz-app.json, "unico": true): un APK per tutte le app. Elenco delle app installate; chiave dal link della mail (pagina milkbarandcoffe-web.github.io/dz, link dzapp://chiave?k=) o scritta a mano; l'INSTALLER riceve chiave e link del servizio LICENZE. Download fisso: releases/download/dz-app/DZ-App.apk
+- Pagina principale senza zoom e senza bordi di sistema passati alla pagina (le app stanno intere nello schermo). ⚙ → Info mostra le misure della pagina.
 - Menu ⚙: Ricarica, Aggiorna l'app, Disinstalla l'app, Spegni interruttore API, Togli permessi Google, Esci da Google, Info.
 
 idea e sviluppo by Daniel Zavan

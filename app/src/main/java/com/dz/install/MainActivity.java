@@ -27,6 +27,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.WindowInsets;
+import android.text.InputType;
 import android.view.animation.LinearInterpolator;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
@@ -37,14 +38,18 @@ import android.webkit.WebSettings;
 import android.webkit.WebStorage;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.window.OnBackInvokedDispatcher;
 
 import java.util.ArrayList;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import java.util.regex.Pattern;
 
 /**
@@ -53,6 +58,8 @@ import java.util.regex.Pattern;
  * L'INSTALLER manda il link dell'app installata (messaggi dz-app / dz-apri):
  * l'APK lo salva e dagli avvii successivi apre direttamente l'app.
  * Ingranaggio in basso a sinistra = menu.
+ * DZ App (BuildConfig.UNICO): un APK per tutte le app. Elenco delle app installate, chiave dal link della mail
+ * (dzapp://chiave?k=...) o scritta a mano; l'INSTALLER riceve la chiave e il link del servizio LICENZE.
  */
 public class MainActivity extends Activity {
 
@@ -145,6 +152,22 @@ public class MainActivity extends Activity {
   boolean daLogin = false;
   boolean verificaLogin = false;
   long ultimaRicarica = 0;
+  // DZ App (APK unico): elenco delle app con le chiavi, app aperta, chiave in installazione, ultimo link aperto.
+  View casa;
+  LinearLayout elenco;
+  String corrente = "";
+  String kInst = "";
+  String ultimo = "";
+  String chiaveAttesa = "";
+  boolean zoomPrincipale = false;
+
+  /** Misure della pagina per Info: dimensioni, densita, zoom, bordi di sistema visti dalla pagina. */
+  static final String JS_MISURE =
+      "(function(){try{var d=document.createElement('div');"
+      + "d.style.cssText='position:fixed;top:0;left:0;visibility:hidden;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom) 0';"
+      + "document.documentElement.appendChild(d);var cs=getComputedStyle(d),t=cs.paddingTop,b=cs.paddingBottom;d.remove();"
+      + "var v=window.visualViewport;return innerWidth+'x'+innerHeight+' dpr '+devicePixelRatio.toFixed(2)"
+      + "+' zoom '+(v?v.scale.toFixed(2):'1')+' bordi '+t+'/'+b;}catch(e){return 'n/d';}})()";
   String guida = "";
   boolean apiOk = false;
   FrameLayout root;
@@ -376,6 +399,10 @@ public class MainActivity extends Activity {
           OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::indietro);
     }
     salvato = stato;
+    if (BuildConfig.UNICO) {
+      chiaveAttesa = chiaveDa(getIntent());
+      salvato = null;
+    }
     costruisci(stato == null);
   }
 
@@ -383,6 +410,11 @@ public class MainActivity extends Activity {
     giro++;
     contenuto = new FrameLayout(this);
     root.addView(contenuto, new FrameLayout.LayoutParams(-1, -1));
+    if (BuildConfig.UNICO) {
+      casa = costruisciCasa();
+      casa.setVisibility(View.GONE);
+      root.addView(casa, new FrameLayout.LayoutParams(-1, -1));
+    }
 
     barra = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
     barra.setIndeterminate(true);
@@ -423,7 +455,7 @@ public class MainActivity extends Activity {
 
   void creaWeb(boolean carica) {
     creaClient();
-    web = nuovaWeb();
+    web = nuovaWeb(true);
     contenuto.addView(web, 0, new FrameLayout.LayoutParams(-1, -1));
     Bundle st = salvato;
     salvato = null;
@@ -432,7 +464,8 @@ public class MainActivity extends Activity {
       h.postDelayed(controlla, 150);
       return;
     }
-    apri(inizio());
+    if (BuildConfig.UNICO) avvioUnico();
+    else apri(inizio());
   }
 
   /** Link di partenza: l'app installata se nota, altrimenti l'INSTALLER. */
@@ -443,6 +476,8 @@ public class MainActivity extends Activity {
 
   void apri(String u) {
     if (web == null) return;
+    ultimo = u;
+    if (casa != null) casa.setVisibility(View.GONE);
     finMenu = null;
     chiudiFinestre();
     copri();
@@ -452,7 +487,7 @@ public class MainActivity extends Activity {
   // ---------- WebView ----------
 
   @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
-  WebView nuovaWeb() {
+  WebView nuovaWeb(boolean principale) {
     WebView w = new WebView(this);
     w.setBackgroundColor(NERO);
     WebSettings s = w.getSettings();
@@ -462,8 +497,10 @@ public class MainActivity extends Activity {
     s.setJavaScriptCanOpenWindowsAutomatically(true);
     s.setLoadWithOverviewMode(true);
     s.setUseWideViewPort(true);
-    s.setSupportZoom(true);
-    s.setBuiltInZoomControls(true);
+    // Zoom con le dita solo nelle finestre "TORNA A" (pagine Google da computer). Nella pagina principale no:
+    // con lo zoom attivo le app non stavano piu intere nello schermo (versione del 2/11 22:15).
+    s.setSupportZoom(!principale);
+    s.setBuiltInZoomControls(!principale);
     s.setDisplayZoomControls(false);
     CookieManager cm = CookieManager.getInstance();
     cm.setAcceptCookie(true);
@@ -498,11 +535,20 @@ public class MainActivity extends Activity {
     if (m.startsWith("dz-zoom:")) {
       try {
         float f = Float.parseFloat(m.substring(8));
-        if (f > 1f && f <= 3f) w.zoomBy(f);
+        if (f > 1f && f <= 3f) {
+          if (w == web) {
+            // Pagina "Rivedi autorizzazioni" nella pagina principale: zoom solo fino alla prossima pagina.
+            w.getSettings().setSupportZoom(true);
+            w.getSettings().setBuiltInZoomControls(true);
+            zoomPrincipale = true;
+          }
+          w.zoomBy(f);
+        }
       } catch (Exception ignored) {
       }
       return;
     }
+    if (BuildConfig.UNICO && messaggioUnico(m, w)) return;
     if (m.equals("dz-api-on")) {
       if (apiOk || w == finMenu) return;
       apiOk = true;
@@ -554,6 +600,11 @@ public class MainActivity extends Activity {
         aiuto(v, u);
         if (v != web) return;
         segnaLogin(Uri.parse(u).getHost());
+        if (zoomPrincipale) {
+          zoomPrincipale = false;
+          v.getSettings().setSupportZoom(false);
+          v.getSettings().setBuiltInZoomControls(false);
+        }
         if (barra != null) barra.setVisibility(View.VISIBLE);
         // Solo script.google.com ha il banner: lo copriamo finche non sparisce.
         // Le pagine di login Google restano visibili.
@@ -624,7 +675,7 @@ public class MainActivity extends Activity {
 
   /** Finestra sopra l'app con la barra "TORNA A NOME" e una tendina di aiuto (testo aperto = testo). */
   WebView finestra(final String testo) {
-    WebView p = nuovaWeb();
+    WebView p = nuovaWeb(false);
     FrameLayout f = new FrameLayout(MainActivity.this);
     f.setBackgroundColor(NERO);
     f.setTag(p);
@@ -704,13 +755,14 @@ public class MainActivity extends Activity {
       long ora = SystemClock.uptimeMillis();
       if (ultimaRicarica != 0 && ora - ultimaRicarica < 30000) return;
       ultimaRicarica = ora;
-      apri(inizio());
+      apri(ultimo.isEmpty() ? inizio() : ultimo);
     });
   }
 
   /** Apre dal menu una pagina Google in una finestra sopra l'app. Alla chiusura l'app si ricarica. */
   void apriImpostazione(String url, boolean spegni) {
     if (web == null) return;
+    if (casa != null) casa.setVisibility(View.GONE);
     finMenu = null;
     chiudiFinestre();
     menuSpegni = spegni;
@@ -742,7 +794,7 @@ public class MainActivity extends Activity {
         if (w == finMenu) {
           finMenu = null;
           menuSpegni = false;
-          h.post(() -> apri(inizio()));
+          h.post(this::ricarica);
         }
         return;
       }
@@ -766,6 +818,10 @@ public class MainActivity extends Activity {
   // ---------- Menu ----------
 
   void menu() {
+    if (BuildConfig.UNICO) {
+      menuUnico();
+      return;
+    }
     String[] voci = {"Ricarica", "Aggiorna l'app", "Disinstalla l'app",
         "Spegni interruttore API", "Togli permessi Google", "Esci da Google", "Info"};
     new AlertDialog.Builder(this)
@@ -804,7 +860,8 @@ public class MainActivity extends Activity {
       runOnUiThread(() -> {
         if (web != null) {
           web.clearCache(true);
-          apri(inizio());
+          if (BuildConfig.UNICO) mostraCasa();
+          else apri(inizio());
         }
         toast("Uscito da Google");
       });
@@ -812,24 +869,44 @@ public class MainActivity extends Activity {
   }
 
   void info() {
+    if (web == null || (casa != null && casa.getVisibility() == View.VISIBLE)) {
+      mostraInfo("");
+      return;
+    }
+    web.evaluateJavascript(JS_MISURE, r -> mostraInfo(r == null ? "" : r.replace("\"", "")));
+  }
+
+  void mostraInfo(String misure) {
     String v = "?";
     try {
       v = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
     } catch (Exception ignored) {
     }
-    boolean collegata = !prefs.getString("app", "").isEmpty();
+    String testo;
+    if (BuildConfig.UNICO) {
+      testo = "Le tue app: " + leggiApps().length() + "."
+          + "\n\nAggiungi un'app: apri il link della mail di Daniel, oppure menu, Aggiungi app con chiave."
+          + "\n\nTieni premuta un'app nell'elenco per aggiornarla o disinstallarla."
+          + "\n\nIngranaggio in basso a sinistra = menu.";
+    } else {
+      boolean collegata = !prefs.getString("app", "").isEmpty();
+      testo = (collegata
+          ? "App installata e collegata: si apre direttamente."
+          : "App non ancora installata: si apre l'installazione.")
+          + "\n\nAggiorna l'app: riapre l'installazione per aggiornarla o reinstallarla."
+          + "\n\nDisinstalla l'app: la cartella dell'app nel Drive va nel cestino (30 giorni per recuperarla)."
+          + "\n\nIngranaggio in basso a sinistra = menu.";
+    }
+    testo += "\n\nSpegni interruttore API: apre l'impostazione «API Google Apps Script» del tuo account."
+        + "\n\nTogli permessi Google: apre l'elenco delle app con accesso al tuo account."
+        + " Chiudendo la finestra l'app si ricarica.";
+    if (!misure.isEmpty()) {
+      int tz = web == null ? 100 : web.getSettings().getTextZoom();
+      testo += "\n\nControllo pagina: " + misure + " testo " + tz + "%";
+    }
     new AlertDialog.Builder(this)
         .setTitle(BuildConfig.NOME + " " + v)
-        .setMessage((collegata
-            ? "App installata e collegata: si apre direttamente."
-            : "App non ancora installata: si apre l'installazione.")
-            + "\n\nAggiorna l'app: riapre l'installazione per aggiornarla o reinstallarla."
-            + "\n\nDisinstalla l'app: la cartella dell'app nel Drive va nel cestino (30 giorni per recuperarla)."
-            + "\n\nSpegni interruttore API: apre l'impostazione «API Google Apps Script» del tuo account."
-            + "\n\nTogli permessi Google: apre l'elenco delle app con accesso al tuo account."
-            + " Chiudendo la finestra l'app si ricarica."
-            + "\n\nIngranaggio in basso a sinistra = menu."
-            + "\n\n" + FIRMA)
+        .setMessage(testo + "\n\n" + FIRMA)
         .setPositiveButton("OK", null)
         .show();
   }
@@ -894,6 +971,20 @@ public class MainActivity extends Activity {
   }
 
   void indietro() {
+    if (BuildConfig.UNICO) {
+      if (casa != null && casa.getVisibility() == View.VISIBLE) {
+        finish();
+        return;
+      }
+      WebView c = cima();
+      if (c != null && c != web) {
+        if (c.canGoBack()) c.goBack();
+        else chiudi(c);
+        return;
+      }
+      mostraCasa();
+      return;
+    }
     WebView c = cima();
     if (c == null) {
       finish();
@@ -909,6 +1000,427 @@ public class MainActivity extends Activity {
   public void onBackPressed() {
     indietro();
   }
+
+  // ---------- DZ App (APK unico) ----------
+
+  @Override
+  protected void onNewIntent(Intent i) {
+    super.onNewIntent(i);
+    setIntent(i);
+    if (!BuildConfig.UNICO) return;
+    String k = chiaveDa(i);
+    if (k.isEmpty()) return;
+    if (web == null) {
+      chiaveAttesa = k;
+      return;
+    }
+    apriChiave(k);
+  }
+
+  /** Chiave nel formato ABCD-EFGH-JKLM, oppure "" se non valida. */
+  static String normChiave(String s) {
+    String k = s == null ? "" : s.toUpperCase().replaceAll("[^A-Z0-9]", "");
+    if (k.length() != 12) return "";
+    return k.substring(0, 4) + "-" + k.substring(4, 8) + "-" + k.substring(8);
+  }
+
+  /** Chiave dal link dzapp://chiave?k=... (pagina della mail). */
+  String chiaveDa(Intent i) {
+    if (i == null || i.getData() == null) return "";
+    Uri u = i.getData();
+    if (!"dzapp".equals(u.getScheme())) return "";
+    return normChiave(u.getQueryParameter("k"));
+  }
+
+  String urlInstaller(String k) {
+    return BuildConfig.INSTALLER + "?k=" + Uri.encode(k) + "&s=" + Uri.encode(BuildConfig.SERVIZIO) + "&apk=1";
+  }
+
+  void avvioUnico() {
+    String k = chiaveAttesa;
+    chiaveAttesa = "";
+    if (!k.isEmpty()) apriChiave(k);
+    else mostraCasa();
+  }
+
+  void apriChiave(String k) {
+    kInst = k;
+    corrente = "";
+    titoloAttesa(BuildConfig.NOME);
+    apri(urlInstaller(k));
+  }
+
+  void apriApp(JSONObject a) {
+    corrente = a.optString("id", "");
+    kInst = a.optString("k", "");
+    titoloAttesa(a.optString("nome", BuildConfig.NOME));
+    apri(a.optString("url", ""));
+  }
+
+  void aggiornaApp(JSONObject a) {
+    String k = a.optString("k", "");
+    if (k.isEmpty()) {
+      chiediChiave();
+      return;
+    }
+    apriChiave(k);
+  }
+
+  void disinstallaApp(JSONObject a) {
+    String k = a.optString("k", "");
+    if (k.isEmpty()) {
+      chiediChiave();
+      return;
+    }
+    kInst = k;
+    corrente = "";
+    titoloAttesa(a.optString("nome", BuildConfig.NOME));
+    apri(urlInstaller(k) + "&azione=disinstalla");
+  }
+
+  void ricarica() {
+    if (!BuildConfig.UNICO) {
+      apri(inizio());
+      return;
+    }
+    if (casa != null && casa.getVisibility() == View.VISIBLE) return;
+    if (!ultimo.isEmpty()) apri(ultimo);
+    else mostraCasa();
+  }
+
+  /** Testo della schermata di attesa: nome dell'app che si apre. */
+  void titoloAttesa(String n) {
+    if (titolo == null || n == null || n.isEmpty()) return;
+    float sp = TITOLO_SP;
+    if (n.length() > 14) sp = Math.max(22f, TITOLO_SP * 14f / n.length());
+    titolo.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+    titolo.setText(n);
+    sfumatura = null;
+    titolo.requestLayout();
+  }
+
+  JSONArray leggiApps() {
+    try {
+      return new JSONArray(prefs.getString("apps", "[]"));
+    } catch (Exception e) {
+      return new JSONArray();
+    }
+  }
+
+  void salvaApps(JSONArray a) {
+    prefs.edit().putString("apps", a.toString()).apply();
+  }
+
+  JSONObject trovaApp(String id) {
+    JSONArray a = leggiApps();
+    for (int i = 0; i < a.length(); i++) {
+      JSONObject o = a.optJSONObject(i);
+      if (o != null && id.equals(o.optString("id"))) return o;
+    }
+    return null;
+  }
+
+  /** Aggiunge o aggiorna un'app dell'elenco (messaggi dz-app2 / dz-apri2 dell'INSTALLER). */
+  JSONObject registraApp(String json) {
+    try {
+      JSONObject x = new JSONObject(json);
+      String id = x.optString("id", ""), nome = x.optString("nome", ""), url = x.optString("url", "");
+      String col = x.optString("colore", "#534AB7"), k = normChiave(x.optString("k", ""));
+      if (!id.matches("[a-z0-9-]{1,60}") || nome.isEmpty() || nome.length() > 40) return null;
+      if (!LINK_APP.matcher(url).matches()) return null;
+      if (!col.matches("#[0-9a-fA-F]{6}")) col = "#534AB7";
+      if (k.isEmpty()) k = kInst;
+      JSONObject nuovo = new JSONObject();
+      nuovo.put("id", id).put("nome", nome).put("url", url).put("colore", col).put("k", k);
+      JSONArray a = leggiApps(), b = new JSONArray();
+      boolean messo = false;
+      for (int i = 0; i < a.length(); i++) {
+        JSONObject o = a.optJSONObject(i);
+        if (o == null) continue;
+        if (id.equals(o.optString("id"))) {
+          if (!messo) b.put(nuovo);
+          messo = true;
+        } else {
+          b.put(o);
+        }
+      }
+      if (!messo) b.put(nuovo);
+      salvaApps(b);
+      aggiornaCasa();
+      return nuovo;
+    } catch (Exception e) {
+      return null;
+    }
+  }
+
+  void togliApp(String id) {
+    JSONArray a = leggiApps(), b = new JSONArray();
+    for (int i = 0; i < a.length(); i++) {
+      JSONObject o = a.optJSONObject(i);
+      if (o != null && !id.equals(o.optString("id"))) b.put(o);
+    }
+    salvaApps(b);
+    if (id.equals(corrente)) corrente = "";
+    aggiornaCasa();
+  }
+
+  /** Messaggi dell'INSTALLER e delle app per DZ App. I messaggi per l'APK "NOME install" sono ignorati. */
+  boolean messaggioUnico(String m, WebView w) {
+    if (m.startsWith("dz-app2:")) {
+      registraApp(m.substring(8));
+      return true;
+    }
+    if (m.startsWith("dz-apri2:")) {
+      JSONObject a = registraApp(m.substring(9));
+      if (a != null) apriApp(a);
+      return true;
+    }
+    if (m.startsWith("dz-rimossa2:")) {
+      togliApp(m.substring(12));
+      return true;
+    }
+    if (m.equals("dz-licenza")) {
+      chiediChiave();
+      return true;
+    }
+    if (m.equals("dz-api-on")) {
+      if (apiOk || w == finMenu || kInst.isEmpty()) return true;
+      apiOk = true;
+      toast("Interruttore attivo ✓");
+      final String k = kInst;
+      h.postDelayed(() -> {
+        apiOk = false;
+        apri(urlInstaller(k) + "&riprendi=1");
+      }, 1300);
+      return true;
+    }
+    return m.startsWith("dz-app:") || m.startsWith("dz-apri:") || m.equals("dz-rimossa");
+  }
+
+  void chiediChiave() {
+    final EditText e = new EditText(this);
+    e.setHint("ABCD-EFGH-JKLM");
+    e.setSingleLine(true);
+    e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+        | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+    FrameLayout f = new FrameLayout(this);
+    f.setPadding(dp(22), dp(6), dp(22), 0);
+    f.addView(e);
+    final AlertDialog d = new AlertDialog.Builder(this)
+        .setTitle("Aggiungi app")
+        .setMessage("Scrivi la chiave che hai ricevuto da Daniel (12 lettere e numeri).")
+        .setView(f)
+        .setPositiveButton("CONTINUA", null)
+        .setNegativeButton("Annulla", null)
+        .create();
+    d.setOnShowListener(x -> d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+      String k = normChiave(e.getText().toString());
+      if (k.isEmpty()) {
+        e.setError("La chiave ha 12 lettere e numeri, per esempio ABCD-EFGH-JKLM");
+        return;
+      }
+      d.dismiss();
+      apriChiave(k);
+    }));
+    d.show();
+  }
+
+  void menuUnico() {
+    final ArrayList<String> voci = new ArrayList<>();
+    final ArrayList<Runnable> azioni = new ArrayList<>();
+    boolean inCasa = casa != null && casa.getVisibility() == View.VISIBLE;
+    if (!inCasa) {
+      voci.add("Le mie app");
+      azioni.add(this::mostraCasa);
+    }
+    voci.add("Aggiungi app con chiave");
+    azioni.add(this::chiediChiave);
+    if (!inCasa) {
+      voci.add("Ricarica");
+      azioni.add(this::ricarica);
+    }
+    final JSONObject cur = corrente.isEmpty() ? null : trovaApp(corrente);
+    if (cur != null && !inCasa) {
+      voci.add("Aggiorna questa app");
+      azioni.add(() -> aggiornaApp(cur));
+      voci.add("Disinstalla questa app");
+      azioni.add(() -> disinstallaApp(cur));
+    }
+    voci.add("Spegni interruttore API");
+    azioni.add(() -> apriImpostazione(URL_INTERRUTTORE, true));
+    voci.add("Togli permessi Google");
+    azioni.add(() -> apriImpostazione(URL_PERMESSI, false));
+    voci.add("Esci da Google");
+    azioni.add(this::esci);
+    voci.add("Info");
+    azioni.add(this::info);
+    new AlertDialog.Builder(this)
+        .setTitle(BuildConfig.NOME)
+        .setItems(voci.toArray(new String[0]), (d, i) -> azioni.get(i).run())
+        .show();
+  }
+
+  void menuApp(final JSONObject o) {
+    String[] voci = {"Apri", "Aggiorna l'app", "Disinstalla l'app", "Togli dall'elenco"};
+    new AlertDialog.Builder(this)
+        .setTitle(o.optString("nome"))
+        .setItems(voci, (d, i) -> {
+          if (i == 0) apriApp(o);
+          else if (i == 1) aggiornaApp(o);
+          else if (i == 2) disinstallaApp(o);
+          else togliApp(o.optString("id"));
+        })
+        .show();
+  }
+
+  /** Schermata con l'elenco delle app (sopra la pagina, sotto la schermata di attesa). */
+  void mostraCasa() {
+    corrente = "";
+    ultimo = "";
+    if (casa == null) return;
+    finMenu = null;
+    chiudiFinestre();
+    aggiornaCasa();
+    casa.setVisibility(View.VISIBLE);
+    scopri();
+    if (web != null) {
+      web.stopLoading();
+      web.loadUrl("about:blank");
+    }
+  }
+
+  View costruisciCasa() {
+    ScrollView sv = new ScrollView(this);
+    sv.setBackgroundColor(NERO);
+    sv.setFillViewport(true);
+    LinearLayout l = new LinearLayout(this);
+    l.setOrientation(LinearLayout.VERTICAL);
+    l.setPadding(dp(16), dp(36), dp(16), dp(90));
+    final TextView t = new TextView(this);
+    t.setText(BuildConfig.NOME);
+    t.setTextSize(TypedValue.COMPLEX_UNIT_SP, TITOLO_SP);
+    t.setTypeface(Typeface.DEFAULT_BOLD);
+    t.setLetterSpacing(0.04f);
+    t.setGravity(Gravity.CENTER);
+    t.setTextColor(Color.WHITE);
+    t.addOnLayoutChangeListener((v, l1, t1, r1, b1, l0, t0, r0, b0) -> {
+      int w = v.getWidth();
+      if (w <= 0 || r1 - l1 == r0 - l0) return;
+      t.getPaint().setShader(new LinearGradient(w * 0.2f, 0, w * 0.8f, 0, COLORI, null, Shader.TileMode.MIRROR));
+      t.invalidate();
+    });
+    TextView s = new TextView(this);
+    s.setText(FIRMA);
+    s.setTextSize(TypedValue.COMPLEX_UNIT_SP, TITOLO_SP * 0.40f);
+    s.setTextColor(0xFF8C8C8C);
+    s.setGravity(Gravity.CENTER);
+    l.addView(t, new LinearLayout.LayoutParams(-1, -2));
+    LinearLayout.LayoutParams ls = new LinearLayout.LayoutParams(-1, -2);
+    ls.topMargin = dp(6);
+    l.addView(s, ls);
+    elenco = new LinearLayout(this);
+    elenco.setOrientation(LinearLayout.VERTICAL);
+    LinearLayout.LayoutParams le = new LinearLayout.LayoutParams(-1, -2);
+    le.topMargin = dp(26);
+    l.addView(elenco, le);
+    TextView piu = new TextView(this);
+    piu.setText("+  AGGIUNGI APP CON CHIAVE");
+    piu.setTextSize(15.5f);
+    piu.setTypeface(Typeface.DEFAULT_BOLD);
+    piu.setTextColor(Color.WHITE);
+    piu.setGravity(Gravity.CENTER);
+    piu.setPadding(dp(14), dp(15), dp(14), dp(15));
+    piu.setBackground(tondo(BuildConfig.COLORE, 0, 13));
+    piu.setOnClickListener(v -> chiediChiave());
+    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+    lp.topMargin = dp(14);
+    l.addView(piu, lp);
+    sv.addView(l, new FrameLayout.LayoutParams(-1, -2));
+    return sv;
+  }
+
+  GradientDrawable tondo(int colore, int bordo, int raggio) {
+    GradientDrawable g = new GradientDrawable();
+    g.setColor(colore);
+    g.setCornerRadius(dp(raggio));
+    if (bordo != 0) g.setStroke(dp(1), bordo);
+    return g;
+  }
+
+  static String sigla(String n) {
+    String[] w = n.trim().split("[\\s_\\-]+");
+    String a = w.length > 0 && !w[0].isEmpty() ? w[0] : "?";
+    String b = w.length > 1 ? w[w.length - 1] : (a.length() > 1 ? a.substring(1) : "");
+    return (a.substring(0, 1) + (b.isEmpty() ? "" : b.substring(0, 1))).toUpperCase();
+  }
+
+  void aggiornaCasa() {
+    if (elenco == null) return;
+    elenco.removeAllViews();
+    JSONArray a = leggiApps();
+    if (a.length() == 0) {
+      TextView v = new TextView(this);
+      v.setText("Nessuna app ancora.\n\nApri il link della mail che ti ha mandato Daniel, oppure tocca AGGIUNGI APP CON CHIAVE e scrivi la chiave.");
+      v.setTextColor(0xFFAAAAAA);
+      v.setTextSize(15);
+      v.setLineSpacing(0, 1.15f);
+      v.setPadding(dp(16), dp(16), dp(16), dp(16));
+      v.setBackground(tondo(0xE61A1A1F, 0xFF2A2A30, 16));
+      elenco.addView(v, new LinearLayout.LayoutParams(-1, -2));
+      return;
+    }
+    for (int i = 0; i < a.length(); i++) {
+      JSONObject o = a.optJSONObject(i);
+      if (o != null) elenco.addView(riga(o));
+    }
+  }
+
+  View riga(final JSONObject o) {
+    LinearLayout r = new LinearLayout(this);
+    r.setOrientation(LinearLayout.HORIZONTAL);
+    r.setGravity(Gravity.CENTER_VERTICAL);
+    r.setPadding(dp(14), dp(12), dp(14), dp(12));
+    r.setBackground(tondo(0xE61A1A1F, 0xFF2A2A30, 16));
+    int col;
+    try {
+      col = Color.parseColor(o.optString("colore", "#534AB7"));
+    } catch (Exception e) {
+      col = BuildConfig.COLORE;
+    }
+    TextView ic = new TextView(this);
+    ic.setText(sigla(o.optString("nome", "?")));
+    ic.setTextColor(Color.WHITE);
+    ic.setTextSize(20);
+    ic.setTypeface(Typeface.DEFAULT_BOLD);
+    ic.setGravity(Gravity.CENTER);
+    ic.setBackground(tondo(col, 0, 17));
+    r.addView(ic, new LinearLayout.LayoutParams(dp(56), dp(56)));
+    LinearLayout tx = new LinearLayout(this);
+    tx.setOrientation(LinearLayout.VERTICAL);
+    tx.setPadding(dp(14), 0, 0, 0);
+    TextView n = new TextView(this);
+    n.setText(o.optString("nome"));
+    n.setTextColor(Color.WHITE);
+    n.setTextSize(18);
+    n.setTypeface(Typeface.DEFAULT_BOLD);
+    TextView s = new TextView(this);
+    s.setText("Tocca per aprire · tieni premuto per altro");
+    s.setTextColor(0xFF999999);
+    s.setTextSize(12.5f);
+    tx.addView(n);
+    tx.addView(s);
+    r.addView(tx, new LinearLayout.LayoutParams(0, -2, 1));
+    r.setOnClickListener(v -> apriApp(o));
+    r.setOnLongClickListener(v -> {
+      menuApp(o);
+      return true;
+    });
+    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+    lp.bottomMargin = dp(10);
+    r.setLayoutParams(lp);
+    return r;
+  }
+
 
   // ---------- Bordi schermo (edge-to-edge) ----------
 
@@ -929,7 +1441,8 @@ public class MainActivity extends Activity {
       b = ins.getSystemWindowInsetBottom();
     }
     v.setPadding(l, t, r, b);
-    return ins;
+    // I bordi sono gia fuori grazie al padding: la pagina non li deve ricevere e aggiungere di nuovo (viewport-fit=cover).
+    return Build.VERSION.SDK_INT >= 30 ? WindowInsets.CONSUMED : ins.consumeSystemWindowInsets();
   }
 
   // ---------- Ciclo di vita ----------
