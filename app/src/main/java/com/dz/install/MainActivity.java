@@ -4,6 +4,7 @@ import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
@@ -31,6 +32,7 @@ import android.text.InputType;
 import android.view.animation.LinearInterpolator;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -177,6 +179,9 @@ public class MainActivity extends Activity {
   final ArrayList<FrameLayout> finestre = new ArrayList<>();
   WebViewClient client;
   WebChromeClient chrome;
+  // Scelta file per <input type=file> delle app (foto, documenti).
+  ValueCallback<Uri[]> sceltaFile;
+  static final int SCELTA_FILE = 4711;
 
   // Copertura con la schermata di attesa: resta finche il banner non e nascosto.
   final Handler h = new Handler(Looper.getMainLooper());
@@ -670,7 +675,42 @@ public class MainActivity extends Activity {
       public void onCloseWindow(WebView w) {
         chiudi(w);
       }
+
+      @Override
+      public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams fp) {
+        if (sceltaFile != null) sceltaFile.onReceiveValue(null);
+        sceltaFile = cb;
+        try {
+          Intent i = fp.createIntent();
+          i.addCategory(Intent.CATEGORY_OPENABLE);
+          if (fp.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+          startActivityForResult(Intent.createChooser(i, "Scegli"), SCELTA_FILE);
+          return true;
+        } catch (Exception e) {
+          sceltaFile = null;
+          Toast.makeText(MainActivity.this, "Nessuna app per scegliere i file", Toast.LENGTH_LONG).show();
+          return false;
+        }
+      }
     };
+  }
+
+  @Override
+  protected void onActivityResult(int req, int res, Intent data) {
+    super.onActivityResult(req, res, data);
+    if (req != SCELTA_FILE || sceltaFile == null) return;
+    Uri[] r = null;
+    if (res == RESULT_OK && data != null) {
+      ClipData cd = data.getClipData();
+      if (cd != null && cd.getItemCount() > 0) {
+        r = new Uri[cd.getItemCount()];
+        for (int k = 0; k < r.length; k++) r[k] = cd.getItemAt(k).getUri();
+      } else {
+        r = WebChromeClient.FileChooserParams.parseResult(res, data);
+      }
+    }
+    sceltaFile.onReceiveValue(r);
+    sceltaFile = null;
   }
 
   /** Finestra sopra l'app con la barra "TORNA A NOME" e una tendina di aiuto (testo aperto = testo). */
