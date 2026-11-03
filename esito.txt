@@ -1,0 +1,9 @@
+== GET
+200 https://script.google.com/macros/s/AKfycbyOMTa6oda0aBSEjd_AEK3Jjrd_IdzFrAlvQZ7BdW2HL7-4Lgb2XV_cphTm89NIqPttXQ/exec
+<!doctype html>
+<html>
+<head>
+<script nonce="8pFz6fYG1U-hs8fpYLnvAQ">window['ppConfig'] = {productName: '26981ed0d57bbad37e728ff58134270c', deleteIsEnforced:  false , sealIsEnforced:  false , heartbeatRate:  0.5 , periodicReportingRateMillis:  60000.0 , disableAllReporting:  false };(function(){'use strict';function k(a){var b=0;return function(){return b<a.length?{done:!1,value:a[b++]}:{done:!0}}}function l(a){var b=typeof Symbol!="undefined"&&Symbol.iterator&&a[Symbol.iterator];if(b)return b.call(a);if(typeof a.length=="number")return{next:k(a)};throw Error(String(a)+" is not an iterable or 
+== POST
+200 https://script.googleusercontent.com/macros/echo?user_content_key=AUkAhnQgnUfX7M9lRdYrpQFEJlUhH0wfN75A0OmGbF8QaCfqrJVu38q1ZkaXlDX9uvwn6Cjb5i3ltgIrzL3Si0Hrgr4yv9_GZn2vzZquhTIKX-34_DG0pq53XiADrxUEH4HZPuDYHG7jjwlpwjtIJ5nhn1gWq0aPZhb8RXqh8jwwmeER48tbg-5ct-M8qgAeuzU79FkGQR1dyt_ra1NJfNCy9o4vhPHJHA4d4lg7G1Tn4mZRUgcc3ZUq1xmLz2VyKPMjRSG0SM7s4FqhF7sbKaAQ4XCDTToCrw&lib=MpWJXNZ3-wH1pj67OZtNZHOkperExGhJA
+{"ok":false,"motivo":"Chiave non valida: controlla di averla scritta giusta."}
