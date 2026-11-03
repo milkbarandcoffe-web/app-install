@@ -537,6 +537,16 @@ public class MainActivity extends Activity {
   }
 
   void messaggio(String m, WebView w) {
+    if (m.equals("dz-api-off")) {
+      if (w != finMenu || !menuSpegni) return;
+      menuSpegni = false;
+      toast("Interruttore spento ✓");
+      final WebView f = w;
+      h.postDelayed(() -> {
+        if (finMenu == f) chiudi(f);
+      }, 1200);
+      return;
+    }
     if (m.startsWith("dz-zoom:")) {
       try {
         float f = Float.parseFloat(m.substring(8));
@@ -863,7 +873,7 @@ public class MainActivity extends Activity {
       return;
     }
     String[] voci = {"Ricarica", "Aggiorna l'app", "Disinstalla l'app",
-        "Spegni interruttore API", "Togli permessi Google", "Esci da Google", "Info"};
+        "Spegni interruttore API", "Togli permessi Google", "Esci da Google", "Info", "Chiudi l'app"};
     new AlertDialog.Builder(this)
         .setTitle(BuildConfig.NOME)
         .setItems(voci, (d, i) -> {
@@ -885,6 +895,9 @@ public class MainActivity extends Activity {
               break;
             case 5:
               esci();
+              break;
+            case 7:
+              finishAndRemoveTask();
               break;
             default:
               info();
@@ -937,7 +950,7 @@ public class MainActivity extends Activity {
           + "\n\nDisinstalla l'app: la cartella dell'app nel Drive va nel cestino (30 giorni per recuperarla)."
           + "\n\nIngranaggio in basso a sinistra = menu.";
     }
-    testo += "\n\nSpegni interruttore API: apre l'impostazione «API Google Apps Script» del tuo account."
+    testo += "\n\nSpegni interruttore API: apre l'impostazione «API Google Apps Script» del tuo account. Quando l'interruttore è spento torni indietro da solo."
         + "\n\nTogli permessi Google: apre l'elenco delle app con accesso al tuo account."
         + " Chiudendo la finestra l'app si ricarica.";
     if (!misure.isEmpty()) {
@@ -1270,7 +1283,7 @@ public class MainActivity extends Activity {
     final ArrayList<Runnable> azioni = new ArrayList<>();
     boolean inCasa = casa != null && casa.getVisibility() == View.VISIBLE;
     if (!inCasa) {
-      voci.add("Le mie app");
+      voci.add("Chiudi questa app");
       azioni.add(this::mostraCasa);
     }
     voci.add("Aggiungi app con chiave");
@@ -1294,6 +1307,8 @@ public class MainActivity extends Activity {
     azioni.add(this::esci);
     voci.add("Info");
     azioni.add(this::info);
+    voci.add("Esci da " + BuildConfig.NOME);
+    azioni.add(this::finishAndRemoveTask);
     new AlertDialog.Builder(this)
         .setTitle(BuildConfig.NOME)
         .setItems(voci.toArray(new String[0]), (d, i) -> azioni.get(i).run())

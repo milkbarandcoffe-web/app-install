@@ -141,8 +141,10 @@
       // Aperta dal menu "Spegni interruttore API": guida a spegnerlo, non avvisa l'APK.
       if (W.__dzSpegni) {
         if (sw && !acceso(sw)) {
+          fatto = true;
           bersaglio = null; posiziona();
-          info('Fatto ✓  Interruttore spento. Tocca «TORNA A …» in alto.', true);
+          info('Fatto ✓  Interruttore spento. Torno indietro...', true);
+          try { if (W.DZ && W.DZ.msg) W.DZ.msg('dz-api-off'); } catch (x) {}
           return;
         }
         if (sw) {
