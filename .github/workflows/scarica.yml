@@ -1,0 +1,26 @@
+name: Scarica file Drive
+
+# Copia temporanea di un file Drive condiviso con link (es. pacchetto), per leggerlo da Claude.
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: ID del file Drive
+        required: true
+
+jobs:
+  scarica:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scarica
+        env:
+          ID: ${{ inputs.id }}
+        run: |
+          echo "$ID" | grep -qE '^[A-Za-z0-9_-]{20,100}$' || { echo "ID non valido"; exit 1; }
+          curl -sSL "https://drive.google.com/uc?export=download&id=$ID" -o file.json
+          ls -l file.json; head -c 200 file.json; echo
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file
+          path: file.json
+          retention-days: 1
