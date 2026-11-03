@@ -8,10 +8,14 @@ on:
         description: ID del file Drive
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   scarica:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Scarica
         env:
           ID: ${{ inputs.id }}
@@ -19,8 +23,10 @@ jobs:
           echo "$ID" | grep -qE '^[A-Za-z0-9_-]{20,100}$' || { echo "ID non valido"; exit 1; }
           curl -sSL "https://drive.google.com/uc?export=download&id=$ID" -o file.json
           ls -l file.json; head -c 200 file.json; echo
-      - uses: actions/upload-artifact@v4
-        with:
-          name: file
-          path: file.json
-          retention-days: 1
+      - name: Salva su un ramo temporaneo
+        run: |
+          git config user.name "dz-bot"; git config user.email "dz-bot@users.noreply.github.com"
+          git checkout --orphan tmp-scarica
+          git rm -rq --cached . ; mkdir -p /tmp/f && mv file.json /tmp/f/
+          git clean -fdq; cp /tmp/f/file.json .
+          git add file.json && git commit -qm "copia temporanea" && git push -fq origin tmp-scarica
