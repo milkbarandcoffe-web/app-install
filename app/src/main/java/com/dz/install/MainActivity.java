@@ -1206,6 +1206,31 @@ public class MainActivity extends Activity {
     }
   }
 
+  /**
+   * Licenza terminata con rimozione approvata (messaggio dell'app bloccata): apre la rimozione nell'INSTALLER,
+   * che toglie l'app dal Drive dell'amico (i suoi dati restano) e poi manda dz-rimossa2 per toglierla dall'elenco.
+   */
+  String rimozioneK = "";
+  long rimozioneT = 0;
+
+  void rimuoviApp(String k) {
+    if (k.isEmpty()) return;
+    long ora = SystemClock.elapsedRealtime();
+    if (k.equals(rimozioneK) && ora - rimozioneT < 60000) return;
+    rimozioneK = k;
+    rimozioneT = ora;
+    String nome = BuildConfig.NOME;
+    JSONArray a = leggiApps();
+    for (int i = 0; i < a.length(); i++) {
+      JSONObject o = a.optJSONObject(i);
+      if (o != null && k.equals(o.optString("k"))) nome = o.optString("nome", nome);
+    }
+    kInst = k;
+    corrente = "";
+    titoloAttesa(nome);
+    apri(urlInstaller(k) + "&azione=rimuovi");
+  }
+
   void togliApp(String id) {
     JSONArray a = leggiApps(), b = new JSONArray();
     for (int i = 0; i < a.length(); i++) {
@@ -1234,6 +1259,10 @@ public class MainActivity extends Activity {
     }
     if (m.equals("dz-licenza")) {
       chiediChiave();
+      return true;
+    }
+    if (m.startsWith("dz-rimuovi:")) {
+      rimuoviApp(normChiave(m.substring(11)));
       return true;
     }
     if (m.equals("dz-api-on")) {
