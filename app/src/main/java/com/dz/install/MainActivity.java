@@ -4,6 +4,9 @@ import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.PendingIntent;
+import android.content.pm.PackageInstaller;
+import android.provider.Settings;
 import android.content.ClipData;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -51,7 +54,13 @@ import android.window.OnBackInvokedDispatcher;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
+import java.util.regex.Matcher;
 import java.util.Locale;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -475,6 +484,7 @@ public class MainActivity extends Activity {
     }
     if (BuildConfig.UNICO) avvioUnico();
     else apri(inizio());
+    controllaVersione();
   }
 
   /** Link di partenza: l'app installata se nota, altrimenti l'INSTALLER. */
@@ -979,7 +989,8 @@ public class MainActivity extends Activity {
       return;
     }
     String[] voci = {"Ricarica", "Aggiorna l'app", "Disinstalla l'app",
-        "Spegni interruttore API", "Togli permessi Google", "Esci da Google", "Info", "Chiudi l'app"};
+        "Spegni interruttore API", "Togli permessi Google", "Esci da Google", "Info", "Chiudi l'app",
+        "Nuova versione dell'APK"};
     new AlertDialog.Builder(this)
         .setTitle(BuildConfig.NOME)
         .setItems(voci, (d, i) -> {
@@ -1004,6 +1015,9 @@ public class MainActivity extends Activity {
               break;
             case 7:
               finishAndRemoveTask();
+              break;
+            case 8:
+              aggiornaDZ(false);
               break;
             default:
               info();
@@ -1046,6 +1060,7 @@ public class MainActivity extends Activity {
       testo = "Le tue app: " + leggiApps().length() + "."
           + "\n\nAggiungi un'app: apri il link della mail di Daniel, oppure menu, Aggiungi app con chiave."
           + "\n\nTieni premuta un'app nell'elenco per aggiornarla o disinstallarla."
+          + "\n\nAggiorna " + BuildConfig.NOME + ": controlla se c'è una versione nuova di questa app e la installa (lo controllo anche da solo una volta al giorno)."
           + "\n\nIngranaggio in basso a sinistra = menu.";
     } else {
       boolean collegata = !prefs.getString("app", "").isEmpty();
@@ -1165,6 +1180,10 @@ public class MainActivity extends Activity {
   @Override
   protected void onNewIntent(Intent i) {
     super.onNewIntent(i);
+    if (i != null && AZIONE_INSTALLA.equals(i.getAction())) {
+      esitoInstalla(i);
+      return;
+    }
     setIntent(i);
     if (!BuildConfig.UNICO) return;
     String k = chiaveDa(i);
@@ -1174,6 +1193,205 @@ public class MainActivity extends Activity {
       return;
     }
     apriChiave(k);
+  }
+
+  // ---------- Aggiornamento di questa APK (come il Viewer 1.10) ----------
+  // Versione e APK dalla release pubblica di questa app (tag = APP_ID, note "NOME - versione 1.N - ...").
+  static final String AZIONE_INSTALLA = "com.dz.install.INSTALLA";
+  static final String URL_REL = "https://api.github.com/repos/milkbarandcoffe-web/app-install/releases/tags/";
+  volatile boolean aggiornando = false;
+
+  String versioneMia() {
+    try {
+      return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+    } catch (Exception e) {
+      return "0";
+    }
+  }
+
+  /** {versione, link dell'APK} oppure null se non leggibile. */
+  String[] releaseOnline() {
+    try {
+      HttpURLConnection c = (HttpURLConnection) new URL(URL_REL + Uri.encode(BuildConfig.APP_ID)).openConnection();
+      c.setConnectTimeout(15000);
+      c.setReadTimeout(15000);
+      c.setRequestProperty("Accept", "application/vnd.github+json");
+      c.setRequestProperty("User-Agent", "DZApp/" + versioneMia());
+      if (c.getResponseCode() != 200) return null;
+      ByteArrayOutputStream b = new ByteArrayOutputStream();
+      try (InputStream in = c.getInputStream()) {
+        byte[] x = new byte[8192];
+        int n;
+        while ((n = in.read(x)) > 0) b.write(x, 0, n);
+      }
+      JSONObject j = new JSONObject(b.toString("UTF-8"));
+      Matcher m = Pattern.compile("versione (\\d+(?:\\.\\d+)+)").matcher(j.optString("body", ""));
+      String apk = "";
+      JSONArray a = j.optJSONArray("assets");
+      for (int i = 0; a != null && i < a.length(); i++) {
+        JSONObject o = a.optJSONObject(i);
+        if (o != null && o.optString("name", "").toLowerCase().endsWith(".apk")) {
+          apk = o.optString("browser_download_url", "");
+          break;
+        }
+      }
+      if (!m.find() || !apk.startsWith("https://")) return null;
+      return new String[] {m.group(1), apk};
+    } catch (Exception e) {
+      return null;
+    }
+  }
+
+  static boolean piuNuova(String a, String b) {
+    String[] x = a.split("\\."), y = b.split("\\.");
+    for (int i = 0; i < Math.max(x.length, y.length); i++) {
+      int p = i < x.length ? numero(x[i]) : 0, q = i < y.length ? numero(y[i]) : 0;
+      if (p != q) return p > q;
+    }
+    return false;
+  }
+
+  static int numero(String s) {
+    try {
+      return Integer.parseInt(s.replaceAll("\\D", ""));
+    } catch (Exception e) {
+      return 0;
+    }
+  }
+
+  /** All'avvio, al massimo una volta ogni 20 ore: se c'e una versione nuova lo dice. */
+  void controllaVersione() {
+    long ora = System.currentTimeMillis(), ult = prefs.getLong("ctrlVersione", 0);
+    if (ora - ult < 20L * 3600 * 1000) return;
+    prefs.edit().putLong("ctrlVersione", ora).apply();
+    h.postDelayed(() -> aggiornaDZ(true), 6000);
+  }
+
+  /** silenzioso = controllo automatico: parla solo se c'e una versione nuova. */
+  void aggiornaDZ(boolean silenzioso) {
+    if (aggiornando) {
+      if (!silenzioso) toast("Aggiornamento gia in corso");
+      return;
+    }
+    if (!silenzioso) toast("Controllo la versione...");
+    new Thread(() -> {
+      String[] r = releaseOnline();
+      String mia = versioneMia();
+      if (r == null) {
+        if (!silenzioso) ui("Non riesco a controllare la versione: riprova piu tardi");
+        return;
+      }
+      if (!piuNuova(r[0], mia)) {
+        if (!silenzioso) ui("Hai gia l'ultima versione (" + mia + ")");
+        return;
+      }
+      runOnUiThread(() -> {
+        if (isFinishing()) return;
+        new AlertDialog.Builder(this)
+            .setTitle(BuildConfig.NOME + " " + r[0])
+            .setMessage("C'e una versione nuova di " + BuildConfig.NOME + ": " + r[0] + " (tu hai la " + mia + ").\n\n"
+                + "Le tue app e le chiavi restano.")
+            .setPositiveButton("AGGIORNA", (d, w) -> scaricaDZ(r))
+            .setNegativeButton("DOPO", null)
+            .show();
+      });
+    }).start();
+  }
+
+  void ui(String m) {
+    runOnUiThread(() -> toast(m));
+  }
+
+  void scaricaDZ(String[] r) {
+    if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+      new AlertDialog.Builder(this)
+          .setTitle("Aggiorna " + BuildConfig.NOME)
+          .setMessage("Android chiede il permesso di installare gli aggiornamenti da questa app.\n\n"
+              + "1. Premi APRI IMPOSTAZIONI.\n2. Attiva \"Consenti da questa fonte\".\n"
+              + "3. Torna qui: menu, Aggiorna " + BuildConfig.NOME + ".")
+          .setPositiveButton("APRI IMPOSTAZIONI", (d, w) -> {
+            try {
+              startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                  Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+              toast("Apri Impostazioni, App, " + BuildConfig.NOME + ", Installa app sconosciute");
+            }
+          })
+          .setNegativeButton("ANNULLA", null)
+          .show();
+      return;
+    }
+    aggiornando = true;
+    toast("Scarico la versione " + r[0] + "...");
+    new Thread(() -> {
+      try {
+        installaApk(r[1]);
+      } catch (Exception e) {
+        ui("Aggiornamento non riuscito: " + e.getMessage());
+      } finally {
+        aggiornando = false;
+      }
+    }).start();
+  }
+
+  /** Scarica l'APK dentro una sessione di PackageInstaller: Android chiede la conferma. */
+  void installaApk(String url) throws Exception {
+    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+    c.setInstanceFollowRedirects(true);
+    c.setConnectTimeout(15000);
+    c.setReadTimeout(60000);
+    c.setRequestProperty("User-Agent", "DZApp/" + versioneMia());
+    int code = c.getResponseCode();
+    if (code != 200) throw new Exception("download HTTP " + code);
+    long tot = c.getContentLengthLong();
+    PackageInstaller pi = getPackageManager().getPackageInstaller();
+    PackageInstaller.SessionParams sp =
+        new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+    sp.setAppPackageName(getPackageName());
+    int id = pi.createSession(sp);
+    PackageInstaller.Session s = pi.openSession(id);
+    try {
+      try (InputStream in = c.getInputStream(); OutputStream out = s.openWrite("app.apk", 0, tot > 0 ? tot : -1)) {
+        byte[] x = new byte[65536];
+        int n;
+        while ((n = in.read(x)) > 0) out.write(x, 0, n);
+        s.fsync(out);
+      }
+      Intent i = new Intent(this, MainActivity.class).setAction(AZIONE_INSTALLA);
+      int fl = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
+      s.commit(PendingIntent.getActivity(this, id, i, fl).getIntentSender());
+    } catch (Exception e) {
+      s.abandon();
+      throw e;
+    } finally {
+      s.close();
+    }
+  }
+
+  @SuppressWarnings("deprecation")
+  void esitoInstalla(Intent it) {
+    int st = it.getIntExtra(PackageInstaller.EXTRA_STATUS, -999);
+    if (st == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+      Intent conferma = Build.VERSION.SDK_INT >= 33
+          ? it.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class)
+          : (Intent) it.getParcelableExtra(Intent.EXTRA_INTENT);
+      if (conferma == null) {
+        toast("Aggiornamento non riuscito: conferma mancante");
+        return;
+      }
+      try {
+        startActivity(conferma);
+      } catch (Exception e) {
+        toast("Aggiornamento non riuscito: " + e.getMessage());
+      }
+    } else if (st == PackageInstaller.STATUS_SUCCESS) {
+      toast("Aggiornato");
+    } else if (st == PackageInstaller.STATUS_FAILURE_ABORTED) {
+      toast("Aggiornamento annullato");
+    } else {
+      String m = it.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+      toast("Aggiornamento non riuscito" + (m != null ? ": " + m : ""));
+    }
   }
 
   /** Chiave nel formato ABCD-EFGH-JKLM, oppure "" se non valida. */
@@ -1440,6 +1658,8 @@ public class MainActivity extends Activity {
     azioni.add(() -> apriImpostazione(URL_PERMESSI, false));
     voci.add("Esci da Google");
     azioni.add(this::esci);
+    voci.add("Aggiorna " + BuildConfig.NOME);
+    azioni.add(() -> aggiornaDZ(false));
     voci.add("Info");
     azioni.add(this::info);
     voci.add("Esci da " + BuildConfig.NOME);

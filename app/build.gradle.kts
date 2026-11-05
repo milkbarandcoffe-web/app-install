@@ -29,6 +29,7 @@ android {
     resValue("string", "app_name", appNome.replace("'", "\\'"))
     resValue("color", "icona", appColore)
     buildConfigField("String", "NOME", javaStr(appNome))
+    buildConfigField("String", "APP_ID", javaStr(appId))
     buildConfigField("String", "INSTALLER", javaStr(appUrl))
     buildConfigField("boolean", "UNICO", appUnico.toString())
     buildConfigField("String", "SERVIZIO", javaStr(appServizio))
