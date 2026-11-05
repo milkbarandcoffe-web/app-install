@@ -9,6 +9,10 @@
       <action android:name="android.intent.action.VIEW" />
       <data android:scheme="https" />
     </intent>
+    <!-- Voce del telefono per le pagine (DZ.parla): da Android 11 il motore di sintesi va dichiarato qui. -->
+    <intent>
+      <action android:name="android.intent.action.TTS_SERVICE" />
+    </intent>
   </queries>
 
   <application

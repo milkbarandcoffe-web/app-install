@@ -48,8 +48,11 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.window.OnBackInvokedDispatcher;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 
 import java.util.ArrayList;
+import java.util.Locale;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.regex.Pattern;
@@ -393,6 +396,7 @@ public class MainActivity extends Activity {
   @Override
   protected void onCreate(Bundle stato) {
     super.onCreate(stato);
+    preparaVoce();
     prefs = getSharedPreferences("cfg", MODE_PRIVATE);
     guida = leggiAsset("guida.js");
     root = new FrameLayout(this);
@@ -533,6 +537,108 @@ public class MainActivity extends Activity {
       if (m == null || m.length() > 400) return;
       final String s = m;
       runOnUiThread(() -> messaggio(s, w));
+    }
+
+    // Voce del telefono per le pagine (la WebView non ha speechSynthesis).
+    // voce(): 1 pronta, 2 si sta preparando, 0 assente. voceStato(): 1 parla, 2 finito, 0 ferma.
+    @JavascriptInterface
+    public int voce() {
+      return ttsPronto;
+    }
+
+    @JavascriptInterface
+    public void parla(String t, float v) {
+      parlaVoce(t, v);
+    }
+
+    @JavascriptInterface
+    public void zitto() {
+      zittoVoce();
+    }
+
+    @JavascriptInterface
+    public int voceStato() {
+      return ttsStato;
+    }
+  }
+
+  // ---------- Voce (TextToSpeech) ----------
+
+  TextToSpeech tts;
+  volatile int ttsPronto = 2;
+  volatile int ttsStato = 0;
+  volatile String ttsId = "";
+
+  void preparaVoce() {
+    try {
+      tts = new TextToSpeech(getApplicationContext(), st -> {
+        if (st != TextToSpeech.SUCCESS || tts == null) {
+          ttsPronto = 0;
+          return;
+        }
+        int r = tts.setLanguage(Locale.ITALY);
+        if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+          ttsPronto = 0;
+          return;
+        }
+        tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+          @Override
+          public void onStart(String id) {
+          }
+
+          @Override
+          public void onDone(String id) {
+            if (id != null && id.equals(ttsId)) ttsStato = 2;
+          }
+
+          @Override
+          @SuppressWarnings("deprecation")
+          public void onError(String id) {
+            if (id != null && id.equals(ttsId)) ttsStato = 2;
+          }
+
+          @Override
+          public void onError(String id, int code) {
+            if (id != null && id.equals(ttsId)) ttsStato = 2;
+          }
+
+          @Override
+          public void onStop(String id, boolean interrotta) {
+            if (id != null && id.equals(ttsId)) ttsStato = 2;
+          }
+        });
+        ttsPronto = 1;
+      });
+    } catch (Exception e) {
+      tts = null;
+      ttsPronto = 0;
+    }
+  }
+
+  void parlaVoce(String t, float v) {
+    if (tts == null || ttsPronto != 1 || t == null || t.trim().isEmpty()) {
+      ttsStato = 2;
+      return;
+    }
+    if (t.length() > 3900) t = t.substring(0, 3900);
+    String id = "dz" + SystemClock.uptimeMillis();
+    ttsId = id;
+    ttsStato = 1;
+    try {
+      tts.setSpeechRate(v > 0.3f && v < 3f ? v : 1f);
+      tts.setPitch(1.05f);
+      if (tts.speak(t, TextToSpeech.QUEUE_FLUSH, new Bundle(), id) != TextToSpeech.SUCCESS) ttsStato = 2;
+    } catch (Exception e) {
+      ttsStato = 2;
+    }
+  }
+
+  void zittoVoce() {
+    ttsStato = 2;
+    try {
+      if (tts != null) tts.stop();
+    } catch (Exception e) {
+      // niente
     }
   }
 
@@ -1540,6 +1646,7 @@ public class MainActivity extends Activity {
 
   @Override
   protected void onPause() {
+    zittoVoce();
     if (onda != null && onda.isRunning()) onda.pause();
     if (web != null) web.onPause();
     CookieManager.getInstance().flush();
@@ -1555,6 +1662,12 @@ public class MainActivity extends Activity {
   @Override
   protected void onDestroy() {
     h.removeCallbacksAndMessages(null);
+    try {
+      if (tts != null) tts.shutdown();
+    } catch (Exception e) {
+      // niente
+    }
+    tts = null;
     fermaAttesa();
     finMenu = null;
     chiudiFinestre();
