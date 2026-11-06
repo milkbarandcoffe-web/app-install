@@ -561,6 +561,12 @@ public class MainActivity extends Activity {
       parlaVoce(t, v);
     }
 
+    // Tono della voce (piu basso = piu grave), lo imposta la pagina prima di parla().
+    @JavascriptInterface
+    public void tono(float p) {
+      ttsTono = p >= 0.5f && p <= 2f ? p : 1.05f;
+    }
+
     @JavascriptInterface
     public void zitto() {
       zittoVoce();
@@ -577,6 +583,7 @@ public class MainActivity extends Activity {
   TextToSpeech tts;
   volatile int ttsPronto = 2;
   volatile int ttsStato = 0;
+  volatile float ttsTono = 1.05f;
   volatile String ttsId = "";
 
   void preparaVoce() {
@@ -636,7 +643,7 @@ public class MainActivity extends Activity {
     ttsStato = 1;
     try {
       tts.setSpeechRate(v > 0.3f && v < 3f ? v : 1f);
-      tts.setPitch(1.05f);
+      tts.setPitch(ttsTono);
       if (tts.speak(t, TextToSpeech.QUEUE_FLUSH, new Bundle(), id) != TextToSpeech.SUCCESS) ttsStato = 2;
     } catch (Exception e) {
       ttsStato = 2;
